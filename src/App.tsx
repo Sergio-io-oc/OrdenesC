@@ -40,8 +40,13 @@ export default function App() {
     const checkConfig = async () => {
       try {
         const response = await fetch('/api/config-check');
-        const data = await response.json();
-        setConfigStatus(data);
+        const contentType = response.headers.get("content-type");
+        if (contentType && contentType.indexOf("application/json") !== -1) {
+          const data = await response.json();
+          setConfigStatus(data);
+        } else {
+          console.error('El servidor no devolvió JSON. Asegúrate de que el backend (server.ts) esté en ejecución.');
+        }
       } catch (err) {
         console.error('Failed to check config:', err);
       }
@@ -161,6 +166,12 @@ export default function App() {
         }),
       });
       
+      const contentType = saveResponse.headers.get("content-type");
+      if (!contentType || contentType.indexOf("application/json") === -1) {
+        const text = await saveResponse.text();
+        throw new Error("El servidor no respondió correctamente. ¿Subiste el proyecto a un hosting estático? Este proyecto requiere un servidor Node.js para funcionar.");
+      }
+
       const saveData = await saveResponse.json();
       
       if (!saveResponse.ok) {
