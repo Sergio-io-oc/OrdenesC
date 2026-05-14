@@ -10,7 +10,13 @@ app.use(express.json());
 
 app.get('/api/data', async (req, res) => {
   try {
-    const url = 'https://docs.google.com/spreadsheets/d/1z36YOIr9aVnGTu0GuVD63HY-QmOwzY9X/export?format=xlsx';
+    const type = req.query.type as string || 'movilizacion';
+    let url = 'https://docs.google.com/spreadsheets/d/1z36YOIr9aVnGTu0GuVD63HY-QmOwzY9X/export?format=xlsx';
+    
+    if (type === 'impresiones') {
+      url = 'https://docs.google.com/spreadsheets/d/1CVftSu-JmI6GZCIGJfkTS5ULT8MSfHiL/export?format=xlsx';
+    }
+
     const response = await fetch(url);
     if (!response.ok) throw new Error('Failed to fetch from Google Sheets');
     

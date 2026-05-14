@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Legend, PieChart, Pie, Cell } from 'recharts';
-import { Bus, TrendingUp, DollarSign, Calendar, Activity, Loader2, AlertCircle, ChevronDown, Sparkles } from 'lucide-react';
+import { Bus, Printer, TrendingUp, DollarSign, Calendar, Activity, Loader2, AlertCircle, ChevronDown, Sparkles } from 'lucide-react';
 import { motion } from 'motion/react';
 import Markdown from 'react-markdown';
 
@@ -19,6 +19,7 @@ interface CategoryTotal {
 }
 
 export default function App() {
+  const [dashboardType, setDashboardType] = useState<'movilizacion' | 'impresiones'>('movilizacion');
   const [dataCache, setDataCache] = useState<Record<string, any[][]>>({});
   const [availableSheets, setAvailableSheets] = useState<string[]>([]);
   const [selectedSheet, setSelectedSheet] = useState<string>('');
@@ -55,13 +56,13 @@ export default function App() {
     }
   };
 
-  const fetchData = useCallback(async (isRefresh = false) => {
+  const fetchData = useCallback(async (isRefresh = false, type = dashboardType) => {
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
     
     setError(null);
     try {
-      const response = await fetch('/api/data');
+      const response = await fetch(`/api/data?type=${type}`);
       if (!response.ok) throw new Error('Data fetch failed');
       const jsonData = await response.json();
       
@@ -87,15 +88,15 @@ export default function App() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [selectedSheet]);
+  }, [selectedSheet, dashboardType]);
 
   useEffect(() => {
-    fetchData();
+    fetchData(false, dashboardType);
     const interval = setInterval(() => {
-      fetchData(true);
+      fetchData(true, dashboardType);
     }, 5000);
     return () => clearInterval(interval);
-  }, [fetchData]);
+  }, [fetchData, dashboardType]);
 
   useEffect(() => {
     if (selectedSheet && dataCache[selectedSheet]) {
@@ -118,47 +119,96 @@ export default function App() {
     let computedAnnual = 0;
     const computedCategoryTotals: { [key: string]: number } = {};
 
-    // Parse rows (Row 3 to end, excluding TOTAL ANUAL)
-    for (let i = 3; i < rows.length; i++) {
+    if (dashboardType === 'movilizacion') {
+      // Parse rows (Row 3 to end, excluding TOTAL ANUAL)
+      for (let i = 3; i < rows.length; i++) {
+          const row = rows[i];
+          if (!row || row.length === 0) continue;
+          
+          const monthName = row[0] ? String(row[0]).trim() : '';
+          if (!monthName || monthName.toUpperCase().includes('TOTAL')) continue;
+
+          const monthData: MonthData = {
+            month: monthName,
+            total: 0,
+            categories: {}
+          };
+
+          let monthTotal = 0;
+
+          for (let j = 1; j < row.length; j++) {
+              const header = rawHeaders[j] ? String(rawHeaders[j]).trim() : '';
+              if (!header || header === 'TOTAL GASTO MENSUAL') continue;
+              
+              let val = 0;
+              const cellValue = row[j];
+              if (typeof cellValue === 'number') {
+                  val = cellValue;
+              } else if (typeof cellValue === 'string') {
+                  const valStr = cellValue.replace(/\$|\./g, '').trim();
+                  val = valStr && valStr !== '-' ? parseInt(valStr, 10) : 0;
+              }
+              
+              if (isNaN(val)) val = 0;
+              
+              monthData.categories[header] = val;
+              monthTotal += val;
+              
+              computedCategoryTotals[header] = (computedCategoryTotals[header] || 0) + val;
+          }
+
+          monthData.total = monthTotal;
+          computedAnnual += monthTotal;
+          monthsData.push(monthData);
+      }
+    } else {
+      // IMPRESIONES format: Categories are rows, months are columns starting from index 4
+      const monthStartIdx = 4;
+      
+      // Initialize months
+      for (let m = monthStartIdx; m < rawHeaders.length; m++) {
+        const monthName = rawHeaders[m] ? String(rawHeaders[m]).trim() : '';
+        if (!monthName || monthName.toUpperCase().includes('TOTAL')) continue;
+        monthsData.push({ month: monthName, total: 0, categories: {} });
+      }
+
+      for (let i = 3; i < rows.length; i++) {
         const row = rows[i];
         if (!row || row.length === 0) continue;
         
-        // Convert month to string safely
-        const monthName = row[0] ? String(row[0]).trim() : '';
-        if (!monthName || monthName.toUpperCase().includes('TOTAL')) continue;
+        let val0 = row[0] ? String(row[0]).trim() : '';
+        let val3 = row[3] ? String(row[3]).trim() : '';
+        let categoryName = val0 || val3 || `Impresora ${i}`;
+        
+        // Skip totals rows
+        if (categoryName.toUpperCase().includes('TOTAL') || String(row[1]).toUpperCase().includes('TOTAL')) continue;
 
-        const monthData: MonthData = {
-          month: monthName,
-          total: 0,
-          categories: {}
-        };
+        let mIdx = 0;
+        for (let m = monthStartIdx; m < rawHeaders.length; m++) {
+          const monthName = rawHeaders[m] ? String(rawHeaders[m]).trim() : '';
+          if (!monthName || monthName.toUpperCase().includes('TOTAL')) continue;
+          
+          let val = 0;
+          const cellValue = row[m];
+          if (typeof cellValue === 'number') {
+              val = cellValue;
+          } else if (typeof cellValue === 'string') {
+              const valStr = cellValue.replace(/\$|\./g, '').trim();
+              val = valStr && valStr !== '-' ? parseInt(valStr, 10) : 0;
+          }
+          if (isNaN(val)) val = 0;
 
-        let monthTotal = 0;
-
-        for (let j = 1; j < row.length; j++) {
-            const header = rawHeaders[j] ? String(rawHeaders[j]).trim() : '';
-            if (!header || header === 'TOTAL GASTO MENSUAL') continue;
-            
-            let val = 0;
-            const cellValue = row[j];
-            if (typeof cellValue === 'number') {
-                val = cellValue;
-            } else if (typeof cellValue === 'string') {
-                const valStr = cellValue.replace(/\$|\./g, '').trim();
-                val = valStr && valStr !== '-' ? parseInt(valStr, 10) : 0;
-            }
-            
-            if (isNaN(val)) val = 0;
-            
-            monthData.categories[header] = val;
-            monthTotal += val;
-            
-            computedCategoryTotals[header] = (computedCategoryTotals[header] || 0) + val;
+          if (monthsData[mIdx]) {
+            monthsData[mIdx].categories[categoryName] = val;
+            monthsData[mIdx].total += val;
+          }
+          
+          computedCategoryTotals[categoryName] = (computedCategoryTotals[categoryName] || 0) + val;
+          computedAnnual += val;
+          
+          mIdx++;
         }
-
-        monthData.total = monthTotal;
-        computedAnnual += monthTotal;
-        monthsData.push(monthData);
+      }
     }
 
     const catTotalsArray = Object.keys(computedCategoryTotals)
@@ -241,22 +291,49 @@ export default function App() {
       <header className="bg-white border-b border-slate-200 sticky top-0 z-10 px-4 sm:px-6 lg:px-8 py-4">
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="bg-emerald-100 text-emerald-700 p-2.5 rounded-xl shadow-sm border border-emerald-200">
-              <Bus className="w-6 h-6" />
+            <div className={`p-2.5 rounded-xl shadow-sm border ${
+              dashboardType === 'movilizacion' ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-blue-100 text-blue-700 border-blue-200'
+            }`}>
+              {dashboardType === 'movilizacion' ? <Bus className="w-6 h-6" /> : <Printer className="w-6 h-6" />}
             </div>
             <div>
-              <h1 className="text-xl sm:text-2xl font-bold text-slate-800 tracking-tight leading-none mb-1">Gastos Movilización</h1>
-              <p className="text-sm text-slate-500 font-medium leading-none">Buses Espinoza Dashboard</p>
+              <h1 className="text-xl sm:text-2xl font-bold text-slate-800 tracking-tight leading-none mb-1">
+                {dashboardType === 'movilizacion' ? 'Gastos Movilización' : 'Gastos de Impresiones'}
+              </h1>
+              <p className="text-sm text-slate-500 font-medium leading-none">
+                {dashboardType === 'movilizacion' ? 'Buses Espinoza Dashboard' : 'Impresiones Dashboard'}
+              </p>
             </div>
           </div>
           
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-4">
+            {/* Type Selector */}
+            <div className="flex bg-slate-100 p-1 rounded-xl">
+              <button
+                onClick={() => setDashboardType('movilizacion')}
+                className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
+                  dashboardType === 'movilizacion' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                Movilización
+              </button>
+              <button
+                onClick={() => setDashboardType('impresiones')}
+                className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
+                  dashboardType === 'impresiones' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                Impresiones
+              </button>
+            </div>
+
             {/* Year / Sheet Selector */}
             <div className="relative">
               <select
                 value={selectedSheet}
                 onChange={(e) => setSelectedSheet(e.target.value)}
                 className="appearance-none bg-slate-100 hover:bg-slate-200 border-none text-slate-800 font-semibold py-2 pl-4 pr-10 rounded-xl focus:ring-2 focus:ring-emerald-500 cursor-pointer transition-colors"
+                style={{ height: "36px" }}
               >
                 {availableSheets.map(sheet => (
                   <option key={sheet} value={sheet}>{sheet}</option>
