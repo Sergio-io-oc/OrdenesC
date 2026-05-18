@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Legend, PieChart, Pie, Cell } from 'recharts';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Legend } from 'recharts';
 import { Bus, Printer, TrendingUp, DollarSign, Calendar, Activity, Loader2, AlertCircle, ChevronDown, Sparkles } from 'lucide-react';
 import { motion } from 'motion/react';
 import Markdown from 'react-markdown';
+import { Chart } from "react-google-charts";
 
 // Color palette for the categories
 const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f43f5e', '#6366f1'];
@@ -11,6 +12,7 @@ interface MonthData {
   month: string;
   total: number;
   categories: { [key: string]: number };
+  machines: { [key: string]: number };
 }
 
 interface CategoryTotal {
@@ -26,35 +28,18 @@ export default function App() {
   
   const [data, setData] = useState<MonthData[]>([]);
   const [categoryTotals, setCategoryTotals] = useState<CategoryTotal[]>([]);
+  const [machineTotals, setMachineTotals] = useState<CategoryTotal[]>([]);
   const [totalAnnual, setTotalAnnual] = useState(0);
   
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [aiPrompt, setAiPrompt] = useState("");
-  const [aiResult, setAiResult] = useState("");
-  const [loadingAi, setLoadingAi] = useState(false);
-
-  const handleAskGemini = async () => {
-    if (!aiPrompt.trim() || !selectedSheet) return;
-    setLoadingAi(true);
-    setAiResult("");
-    try {
-      const response = await fetch('/api/gemini', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: aiPrompt, contextData: dataCache[selectedSheet] })
-      });
-      const resData = await response.json();
-      if (!response.ok) throw new Error(resData.error || 'Error de la IA');
-      setAiResult(resData.result);
-    } catch (err: any) {
-      setAiResult("**Error:** " + err.message + "\n\n(Asegúrate de configurar `GEMINI_API_KEY` en tu entorno si aún no lo has hecho)");
-    } finally {
-      setLoadingAi(false);
-    }
-  };
+  const [pieMonthFilter, setPieMonthFilter] = useState<string>('anual');
+  const [pieCenterFilter, setPieCenterFilter] = useState<string>('Todos');
+  const [activeIndexMachine, setActiveIndexMachine] = useState<number | undefined>();
+  const [activeIndexCategory, setActiveIndexCategory] = useState<number | undefined>();
+  const [machineCenterMap, setMachineCenterMap] = useState<Record<string, string>>({});
 
   const fetchData = useCallback(async (isRefresh = false, type = dashboardType) => {
     if (isRefresh) setRefreshing(true);
@@ -118,6 +103,8 @@ export default function App() {
     
     let computedAnnual = 0;
     const computedCategoryTotals: { [key: string]: number } = {};
+    const computedMachineTotals: { [key: string]: number } = {};
+    const computedMachineCenterMap: Record<string, string> = {};
 
     if (dashboardType === 'movilizacion') {
       // Parse rows (Row 3 to end, excluding TOTAL ANUAL)
@@ -131,7 +118,8 @@ export default function App() {
           const monthData: MonthData = {
             month: monthName,
             total: 0,
-            categories: {}
+            categories: {},
+            machines: {}
           };
 
           let monthTotal = 0;
@@ -169,7 +157,7 @@ export default function App() {
       for (let m = monthStartIdx; m < rawHeaders.length; m++) {
         const monthName = rawHeaders[m] ? String(rawHeaders[m]).trim() : '';
         if (!monthName || monthName.toUpperCase().includes('TOTAL')) continue;
-        monthsData.push({ month: monthName, total: 0, categories: {} });
+        monthsData.push({ month: monthName, total: 0, categories: {}, machines: {} });
       }
 
       for (let i = 3; i < rows.length; i++) {
@@ -178,10 +166,39 @@ export default function App() {
         
         let val0 = row[0] ? String(row[0]).trim() : '';
         let val3 = row[3] ? String(row[3]).trim() : '';
-        let categoryName = val0 || val3 || `Impresora ${i}`;
         
         // Skip totals rows
-        if (categoryName.toUpperCase().includes('TOTAL') || String(row[1]).toUpperCase().includes('TOTAL')) continue;
+        if (val0.toUpperCase().includes('TOTAL') || String(row[1]).toUpperCase().includes('TOTAL') || val3.toUpperCase().includes('TOTAL')) continue;
+
+        let categoryName = val0 || val3 || `Impresora ${i}`;
+        let machineName = val3 || `Impresora ${i}`;
+        const machineUpper = val3.toUpperCase();
+
+        if (
+            machineUpper.includes('TASKALFA 8003I') || 
+            machineUpper.includes('PRO 8200S') || 
+            machineUpper.includes('IMC 8300S')
+        ) {
+            categoryName = 'Centro Copiado Marcos Zuñiga';
+        } else if (
+            machineUpper.includes('TASKALFA 5054CI') || 
+            machineUpper.includes('ECOSYS MA4000CIX') || 
+            machineUpper.includes('IM 2500')
+        ) {
+            categoryName = 'Centro Copiado Patricia Castañeda';
+        } else if (
+            machineUpper.includes('IMC 2000') || 
+            machineUpper.includes('MP 2555')
+        ) {
+            categoryName = 'Centro Copiado Biblioteca Central';
+        } else if (val0) {
+            if (val0.toUpperCase().includes('MARCOS ZUÑIGA')) categoryName = 'Centro Copiado Marcos Zuñiga';
+            else if (val0.toUpperCase().includes('PATRICIA CASTAÑEDA')) categoryName = 'Centro Copiado Patricia Castañeda';
+            else if (val0.toUpperCase().includes('BIBLIOTECA')) categoryName = 'Centro Copiado Biblioteca Central';
+            else categoryName = val0;
+        } else {
+            categoryName = val3;
+        }
 
         let mIdx = 0;
         for (let m = monthStartIdx; m < rawHeaders.length; m++) {
@@ -199,11 +216,14 @@ export default function App() {
           if (isNaN(val)) val = 0;
 
           if (monthsData[mIdx]) {
-            monthsData[mIdx].categories[categoryName] = val;
+            monthsData[mIdx].categories[categoryName] = (monthsData[mIdx].categories[categoryName] || 0) + val;
+            monthsData[mIdx].machines[machineName] = (monthsData[mIdx].machines[machineName] || 0) + val;
             monthsData[mIdx].total += val;
           }
           
           computedCategoryTotals[categoryName] = (computedCategoryTotals[categoryName] || 0) + val;
+          computedMachineTotals[machineName] = (computedMachineTotals[machineName] || 0) + val;
+          computedMachineCenterMap[machineName] = categoryName;
           computedAnnual += val;
           
           mIdx++;
@@ -216,8 +236,15 @@ export default function App() {
       .filter(c => c.value > 0)
       .sort((a, b) => b.value - a.value);
 
+    const machTotalsArray = Object.keys(computedMachineTotals)
+      .map(name => ({ name, value: computedMachineTotals[name] }))
+      .filter(c => c.value > 0)
+      .sort((a, b) => b.value - a.value);
+
     setData(monthsData);
     setCategoryTotals(catTotalsArray);
+    setMachineTotals(machTotalsArray);
+    setMachineCenterMap(computedMachineCenterMap);
     setTotalAnnual(computedAnnual);
   };
 
@@ -285,10 +312,62 @@ export default function App() {
   const sortedByTotal = [...data].sort((a, b) => b.total - a.total);
   const highestMonth = sortedByTotal.length > 0 ? sortedByTotal[0] : null;
 
+  // Calculate dynamic pie data based on month filter
+  let displayMachineTotals = machineTotals;
+  let displayCategoryTotals = categoryTotals;
+  
+  if (pieMonthFilter !== 'anual') {
+    const selectedMonthData = data.find(m => m.month === pieMonthFilter);
+    if (selectedMonthData) {
+      displayMachineTotals = Object.keys(selectedMonthData.machines)
+        .map(name => ({ name, value: selectedMonthData.machines[name] }))
+        .filter(c => c.value > 0);
+      
+      displayCategoryTotals = Object.keys(selectedMonthData.categories)
+        .map(name => ({ name, value: selectedMonthData.categories[name] }))
+        .filter(c => c.value > 0)
+        .sort((a, b) => b.value - a.value);
+    } else {
+      displayMachineTotals = [];
+      displayCategoryTotals = [];
+    }
+  }
+
+  if (pieCenterFilter !== 'Todos') {
+    displayMachineTotals = displayMachineTotals.filter(m => machineCenterMap[m.name] === pieCenterFilter);
+  }
+  displayMachineTotals.sort((a, b) => b.value - a.value);
+
+  const availableCenters = Array.from(new Set(Object.values(machineCenterMap))).filter(Boolean).sort();
+
+  const preparePieData = (dataArray: {name: string, value: number}[]) => {
+    if (!dataArray || dataArray.length === 0) return [];
+    return [
+      ["Nombre", "Gasto"],
+      ...dataArray.map(item => [item.name, item.value])
+    ];
+  };
+
+  const getPieOptions = (dataLength: number, activeIndex?: number) => ({
+    is3D: true,
+    backgroundColor: 'transparent',
+    legend: 'none',
+    tooltip: { trigger: 'none' },
+    enableInteractivity: false,
+    animation: {
+      duration: 1000,
+      easing: 'out',
+      startup: true,
+    },
+    colors: COLORS,
+    chartArea: { width: '85%', height: '85%' },
+    slices: (activeIndex !== undefined && dataLength > 1) ? { [activeIndex]: { offset: 0.15 } } : {}
+  });
+
   return (
-    <div className="min-h-screen bg-slate-50 font-sans text-slate-900 pb-12">
+    <div className="min-h-screen bg-gradient-to-br from-[#ebf4f5] to-[#f5f7fa] font-sans text-slate-900 pb-12">
       {/* Header */}
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-10 px-4 sm:px-6 lg:px-8 py-4">
+      <header className="bg-white/95 backdrop-blur-md border-b border-slate-200/60 sticky top-0 z-50 px-4 sm:px-6 lg:px-8 py-4 shadow-sm">
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className={`p-2.5 rounded-xl shadow-sm border ${
@@ -404,28 +483,22 @@ export default function App() {
           </motion.div>
         </div>
 
-        {/* Charts Row 1 */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        {/* Breakdown Charts Row */}
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
           
           <motion.div 
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ delay: 0.4 }}
-            className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 flex flex-col"
+            className="col-span-1 lg:col-span-2 bg-white p-6 rounded-3xl shadow-sm border border-slate-100 flex flex-col"
           >
             <h3 className="text-lg font-bold text-slate-800 mb-6 flex items-center gap-2">
               <Calendar className="w-5 h-5 text-slate-400" />
-              Evolución Mensual
+              Gasto Total Mensual
             </h3>
-            <div className="h-[300px] w-full">
+            <div className="h-[350px] w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={data} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
-                      <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
-                    </linearGradient>
-                  </defs>
+                <BarChart data={data} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                   <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#64748b' }} dy={10} />
                   <YAxis 
@@ -435,71 +508,162 @@ export default function App() {
                     tickFormatter={(val) => `$${(val/1000000).toFixed(1)}M`}
                     dx={-10}
                   />
-                  <Tooltip content={<CustomTooltip />} />
-                  <Area 
-                    type="monotone" 
-                    name="Gasto Total"
+                  <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(226, 232, 240, 0.4)' }} />
+                  <Bar 
                     dataKey="total" 
-                    stroke="#10b981" 
-                    strokeWidth={3}
-                    fillOpacity={1} 
-                    fill="url(#colorTotal)" 
-                    activeDot={{ r: 6, fill: '#10b981', stroke: '#fff', strokeWidth: 2 }}
+                    name="Gasto Total"
+                    fill="#10b981" 
+                    radius={[4, 4, 0, 0]}
                   />
-                </AreaChart>
+                </BarChart>
               </ResponsiveContainer>
             </div>
           </motion.div>
 
-          <motion.div 
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ delay: 0.5 }}
-            className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 flex flex-col"
-          >
-            <h3 className="text-lg font-bold text-slate-800 mb-6">Desglose por Categoría (Total Anual)</h3>
-            <div className="h-[300px] w-full flex items-center justify-center">
-              {categoryTotals.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={categoryTotals}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={70}
-                      outerRadius={100}
-                      paddingAngle={2}
-                      dataKey="value"
-                      stroke="none"
-                    >
-                      {categoryTotals.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <Tooltip content={<CustomTooltip />} />
-                    <Legend 
-                      layout="vertical" 
-                      verticalAlign="middle" 
-                      align="right"
-                      wrapperStyle={{ fontSize: '12px', color: '#475569' }}
-                    />
-                  </PieChart>
-                </ResponsiveContainer>
-              ) : (
-                <p className="text-slate-400 text-sm">Sin datos para mostrar</p>
-              )}
-            </div>
-          </motion.div>
+          {dashboardType === 'impresiones' ? (
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ delay: 0.5 }}
+              className="col-span-1 lg:col-span-3 bg-white p-6 rounded-3xl shadow-sm border border-slate-100 flex flex-col"
+            >
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
+                <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                  <Printer className="w-5 h-5 text-slate-400" />
+                  Desglose por Máquina {pieMonthFilter !== 'anual' ? `(${pieMonthFilter})` : '(Total Anual)'}
+                </h3>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={pieCenterFilter}
+                    onChange={(e) => setPieCenterFilter(e.target.value)}
+                    className="bg-slate-50 border border-slate-200 text-slate-700 text-sm rounded-xl py-1.5 px-3 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  >
+                    <option value="Todos">Todos los Centros</option>
+                    {availableCenters.map(center => (
+                      <option key={center} value={center}>{center}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={pieMonthFilter}
+                    onChange={(e) => setPieMonthFilter(e.target.value)}
+                    className="bg-slate-50 border border-slate-200 text-slate-700 text-sm rounded-xl py-1.5 px-3 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  >
+                    <option value="anual">Anual</option>
+                    {data.map(m => (
+                      <option key={m.month} value={m.month}>{m.month}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="min-h-[350px] w-full flex items-center justify-center relative">
+                {displayMachineTotals.length > 0 ? (
+                  <div className="flex flex-col sm:flex-row items-center w-full h-full">
+                    <div className="w-full sm:w-[55%] h-full pb-4 sm:pb-0">
+                      <Chart
+                        chartType="PieChart"
+                        data={preparePieData(displayMachineTotals)}
+                        options={getPieOptions(displayMachineTotals.length, activeIndexMachine)}
+                        width="100%"
+                        height="100%"
+                      />
+                    </div>
+                    <div className="w-full sm:w-[45%] h-[200px] sm:h-full overflow-y-auto px-2 py-4">
+                      <ul className="text-sm text-slate-600 space-y-1">
+                        {displayMachineTotals.map((item, index) => (
+                          <li 
+                            key={item.name} 
+                            className={`flex items-center justify-between cursor-pointer rounded-lg p-2 transition-colors duration-300 ${activeIndexMachine === index ? 'bg-slate-100 font-medium text-slate-900 shadow-sm' : 'hover:bg-slate-50'}`}
+                            onMouseEnter={() => setActiveIndexMachine(index)}
+                            onMouseLeave={() => setActiveIndexMachine(undefined)}
+                            title={`Gasto: $${item.value.toLocaleString('es-CL')}`}
+                          >
+                            <div className="flex items-start gap-2 w-full">
+                              <div className="pt-1">
+                                <span className="block w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: COLORS[index % COLORS.length] }}></span>
+                              </div>
+                              <span className="flex-1 break-words leading-tight">{item.name.replace('IMPRESORA ', '')}</span>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-slate-400 text-sm">Sin datos para mostrar</p>
+                )}
+              </div>
+            </motion.div>
+          ) : (
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ delay: 0.5 }}
+              className="col-span-1 lg:col-span-3 bg-white p-6 rounded-3xl shadow-sm border border-slate-100 flex flex-col"
+            >
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
+                <h3 className="text-lg font-bold text-slate-800">Desglose por Categoría {pieMonthFilter !== 'anual' ? `(${pieMonthFilter})` : '(Total Anual)'}</h3>
+                <select
+                  value={pieMonthFilter}
+                  onChange={(e) => setPieMonthFilter(e.target.value)}
+                  className="bg-slate-50 border border-slate-200 text-slate-700 text-sm rounded-xl py-1.5 px-3 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                >
+                  <option value="anual">Anual</option>
+                  {data.map(m => (
+                    <option key={m.month} value={m.month}>{m.month}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="min-h-[350px] w-full flex items-center justify-center relative">
+                {displayCategoryTotals.length > 0 ? (
+                  <div className="flex flex-col sm:flex-row items-center w-full h-full">
+                    <div className="w-full sm:w-[55%] h-full pb-4 sm:pb-0">
+                      <Chart
+                        chartType="PieChart"
+                        data={preparePieData(displayCategoryTotals)}
+                        options={getPieOptions(displayCategoryTotals.length, activeIndexCategory)}
+                        width="100%"
+                        height="100%"
+                      />
+                    </div>
+                    <div className="w-full sm:w-[45%] h-[200px] sm:h-full overflow-y-auto px-2 py-4">
+                      <ul className="text-sm text-slate-600 space-y-1">
+                        {displayCategoryTotals.map((item, index) => (
+                          <li 
+                            key={item.name} 
+                            className={`flex items-center justify-between cursor-pointer rounded-lg p-2 transition-colors duration-300 ${activeIndexCategory === index ? 'bg-slate-100 font-medium text-slate-900 shadow-sm' : 'hover:bg-slate-50'}`}
+                            onMouseEnter={() => setActiveIndexCategory(index)}
+                            onMouseLeave={() => setActiveIndexCategory(undefined)}
+                            title={`Gasto: $${item.value.toLocaleString('es-CL')}`}
+                          >
+                            <div className="flex items-start gap-2 w-full">
+                              <div className="pt-1">
+                                <span className="block w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: COLORS[index % COLORS.length] }}></span>
+                              </div>
+                              <span className="flex-1 break-words leading-tight">{item.name.replace('CENTRO DE COPIADO ', '')}</span>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-slate-400 text-sm">Sin datos para mostrar</p>
+                )}
+              </div>
+            </motion.div>
+          )}
         </div>
 
-        {/* Breakdown Bar Chart */}
+        {/* Breakdown Stacked Bar Chart */}
         <motion.div 
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.6 }}
             className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100"
         >
-          <h3 className="text-lg font-bold text-slate-800 mb-6">Gasto de Categorías por Mes</h3>
+          <h3 className="text-lg font-bold text-slate-800 mb-6">
+            Gasto por {dashboardType === 'impresiones' ? 'Centro de Copiado' : 'Categorías'} por Mes
+          </h3>
           <div className="h-[400px] w-full mt-4">
             {data.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
@@ -513,8 +677,8 @@ export default function App() {
                     tickFormatter={(val) => `$${(val/1000000).toFixed(0)}M`}
                     dx={-10}
                   />
-                  <Tooltip content={<CustomTooltip />} />
-                  <Legend wrapperStyle={{ paddingTop: '20px', fontSize: '14px' }} />
+                  <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(226, 232, 240, 0.4)' }} />
+                  <Legend wrapperStyle={{ paddingTop: '20px', fontSize: '12px', lineHeight: '18px' }} />
                   {categoryTotals.map((cat, index) => (
                     <Bar 
                       key={cat.name} 
@@ -522,7 +686,6 @@ export default function App() {
                       name={cat.name}
                       stackId="a" 
                       fill={COLORS[index % COLORS.length]} 
-                      radius={index === categoryTotals.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]}
                     />
                   ))}
                 </BarChart>
@@ -533,45 +696,6 @@ export default function App() {
               </div>
             )}
           </div>
-        </motion.div>
-
-        {/* Gemini AI Integration */}
-        <motion.div 
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.7 }}
-            className="bg-indigo-50 p-6 rounded-3xl border border-indigo-100"
-        >
-          <div className="flex items-center gap-2 mb-4">
-            <Sparkles className="h-6 w-6 text-indigo-600" />
-            <h3 className="text-lg font-bold text-indigo-900">Análisis con Gemini AI</h3>
-          </div>
-          <p className="text-indigo-700 text-sm mb-4">Pregúntale a la inteligencia artificial sobre tus gastos en esta hoja. Hará los cálculos o comparaciones que le pidas.</p>
-          <div className="flex flex-col md:flex-row gap-3">
-            <input 
-              type="text" 
-              value={aiPrompt}
-              onChange={(e) => setAiPrompt(e.target.value)}
-              placeholder="Ej: ¿Cuál fue el mes de mayor gasto y por qué?"
-              className="flex-1 px-4 py-3 rounded-xl border border-indigo-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
-              onKeyDown={(e) => { if (e.key === 'Enter') handleAskGemini(); }}
-            />
-            <button 
-              onClick={handleAskGemini}
-              disabled={loadingAi || !aiPrompt.trim()}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-xl font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center min-w-[120px]"
-            >
-              {loadingAi ? <Loader2 className="h-5 w-5 animate-spin" /> : "Preguntar"}
-            </button>
-          </div>
-          
-          {aiResult && (
-            <div className="mt-6 bg-white p-5 rounded-2xl border border-indigo-100 shadow-sm">
-              <div className="prose prose-sm prose-indigo max-w-none">
-                <Markdown>{aiResult}</Markdown>
-              </div>
-            </div>
-          )}
         </motion.div>
 
       </main>
