@@ -786,7 +786,23 @@ export default function App() {
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 {/* Quantities Chart */}
                 <div className="flex flex-col">
-                  <h4 className="text-sm font-semibold text-slate-600 mb-4">Cantidades Unitarias (Resmas)</h4>
+                  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-end mb-4 gap-2">
+                    <h4 className="text-sm font-semibold text-slate-600">Cantidades Unitarias (Resmas)</h4>
+                    <div className="text-right flex items-center gap-4">
+                      <div className="flex flex-col items-end">
+                         <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Total Carta</span>
+                         <span className="text-sm font-bold text-blue-600">{paperData.reduce((acc, curr) => acc + curr.qtyCarta, 0).toLocaleString('es-CL')}</span>
+                      </div>
+                      <div className="flex flex-col items-end">
+                         <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Total Oficio</span>
+                         <span className="text-sm font-bold text-amber-500">{paperData.reduce((acc, curr) => acc + curr.qtyOficio, 0).toLocaleString('es-CL')}</span>
+                      </div>
+                      <div className="flex flex-col items-end border-l border-slate-200 pl-4">
+                         <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Total General</span>
+                         <span className="text-sm font-bold text-slate-800">{paperData.reduce((acc, curr) => acc + curr.qtyCarta + curr.qtyOficio, 0).toLocaleString('es-CL')}</span>
+                      </div>
+                    </div>
+                  </div>
                   <div className="h-[300px] w-full">
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart data={paperData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
@@ -826,7 +842,23 @@ export default function App() {
 
                 {/* Values Chart */}
                 <div className="flex flex-col">
-                  <h4 className="text-sm font-semibold text-slate-600 mb-4">Gasto de Compra</h4>
+                  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-end mb-4 gap-2">
+                    <h4 className="text-sm font-semibold text-slate-600">Gasto de Compra</h4>
+                    <div className="text-right flex items-center gap-4">
+                      <div className="flex flex-col items-end">
+                         <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Total Carta</span>
+                         <span className="text-sm font-bold text-blue-600">{formatCurrency(paperData.reduce((acc, curr) => acc + curr.valCarta, 0))}</span>
+                      </div>
+                      <div className="flex flex-col items-end">
+                         <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Total Oficio</span>
+                         <span className="text-sm font-bold text-amber-500">{formatCurrency(paperData.reduce((acc, curr) => acc + curr.valOficio, 0))}</span>
+                      </div>
+                      <div className="flex flex-col items-end border-l border-slate-200 pl-4">
+                         <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Total General</span>
+                         <span className="text-sm font-bold text-slate-800">{formatCurrency(paperData.reduce((acc, curr) => acc + curr.valCarta + curr.valOficio, 0))}</span>
+                      </div>
+                    </div>
+                  </div>
                   <div className="h-[300px] w-full">
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart data={paperData} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
