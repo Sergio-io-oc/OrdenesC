@@ -1,9 +1,10 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Legend, LineChart, Line } from 'recharts';
-import { Bus, Printer, TrendingUp, DollarSign, Calendar, Activity, Loader2, AlertCircle, ChevronDown, Sparkles } from 'lucide-react';
-import { motion } from 'motion/react';
+import { Bus, Printer, TrendingUp, DollarSign, Calendar, Activity, Loader2, AlertCircle, ChevronDown, Sparkles, MapPin, Folder, Lock } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 import Markdown from 'react-markdown';
 import { Chart } from "react-google-charts";
+import { EstadioMaristaControl } from './components/EstadioMarista';
 
 // Color palette for the categories
 const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f43f5e', '#6366f1'];
@@ -30,7 +31,9 @@ interface PaperDataRow {
 }
 
 export default function App() {
+  const [activeTab, setActiveTab] = useState<'estadio' | 'movilizacion' | 'impresiones'>('estadio');
   const [dashboardType, setDashboardType] = useState<'movilizacion' | 'impresiones'>('movilizacion');
+  const [isOtrosOpen, setIsOtrosOpen] = useState(false);
   const [dataCache, setDataCache] = useState<Record<string, any[][]>>({});
   const [availableSheets, setAvailableSheets] = useState<string[]>([]);
   const [selectedSheet, setSelectedSheet] = useState<string>('');
@@ -427,66 +430,163 @@ export default function App() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#ebf4f5] to-[#f5f7fa] font-sans text-slate-900 pb-12">
       {/* Header */}
-      <header className="bg-white/95 backdrop-blur-md border-b border-slate-200/60 sticky top-0 z-50 px-4 sm:px-6 lg:px-8 py-4 shadow-sm">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <header className="bg-white/95 backdrop-blur-md border-b border-slate-200/60 sticky top-0 z-50 px-4 sm:px-6 lg:px-8 py-3.5 shadow-sm">
+        <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className={`p-2.5 rounded-xl shadow-sm border ${
-              dashboardType === 'movilizacion' ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-blue-100 text-blue-700 border-blue-200'
+              activeTab === 'estadio' 
+                ? 'bg-blue-100 text-blue-700 border-blue-200'
+                : dashboardType === 'movilizacion' 
+                  ? 'bg-emerald-100 text-emerald-700 border-emerald-200' 
+                  : 'bg-indigo-100 text-indigo-700 border-indigo-200'
             }`}>
-              {dashboardType === 'movilizacion' ? <Bus className="w-6 h-6" /> : <Printer className="w-6 h-6" />}
+              {activeTab === 'estadio' ? (
+                <MapPin className="w-6 h-6" />
+              ) : dashboardType === 'movilizacion' ? (
+                <Bus className="w-6 h-6" />
+              ) : (
+                <Printer className="w-6 h-6" />
+              )}
             </div>
             <div>
               <h1 className="text-xl sm:text-2xl font-bold text-slate-800 tracking-tight leading-none mb-1">
-                {dashboardType === 'movilizacion' ? 'Gastos Movilización' : 'Gastos de Impresiones'}
+                {activeTab === 'estadio' 
+                  ? 'Control Estadio Marista' 
+                  : activeTab === 'movilizacion' 
+                    ? 'Gastos Movilización' 
+                    : 'Gastos de Impresiones'}
               </h1>
-              <p className="text-sm text-slate-500 font-medium leading-none">
-                {dashboardType === 'movilizacion' ? 'Buses Espinoza Dashboard' : 'Impresiones Dashboard'}
+              <p className="text-xs sm:text-sm text-slate-500 font-medium leading-none">
+                {activeTab === 'estadio' 
+                  ? 'Registro de viajes y control de llegada/regreso' 
+                  : activeTab === 'movilizacion' 
+                    ? 'Buses Espinoza Dashboard' 
+                    : 'Impresiones Dashboard'}
               </p>
             </div>
           </div>
           
-          <div className="flex items-center gap-4">
-            {/* Type Selector */}
-            <div className="flex bg-slate-100 p-1 rounded-xl">
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Primary Navigation Tabs */}
+            <div className="flex bg-slate-100/90 p-1 rounded-2xl border border-slate-200/60 shadow-inner items-center">
               <button
-                onClick={() => setDashboardType('movilizacion')}
-                className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
-                  dashboardType === 'movilizacion' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                onClick={() => {
+                  setActiveTab('estadio');
+                  setIsOtrosOpen(false);
+                }}
+                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all ${
+                  activeTab === 'estadio' 
+                    ? 'bg-white text-blue-700 shadow-sm' 
+                    : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                Movilización
+                <MapPin className="w-4 h-4" />
+                Control Estadio
               </button>
-              <button
-                onClick={() => setDashboardType('impresiones')}
-                className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
-                  dashboardType === 'impresiones' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-                }`}
-              >
-                Impresiones
-              </button>
+
+              {/* Otros Dropdown Button */}
+              <div className="relative">
+                <button
+                  onClick={() => setIsOtrosOpen(!isOtrosOpen)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all ${
+                    activeTab !== 'estadio' 
+                      ? 'bg-white text-slate-800 shadow-sm ring-1 ring-slate-200/80' 
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Folder className="w-4 h-4 text-slate-500" />
+                  Otros
+                  <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isOtrosOpen ? 'rotate-180' : ''}`} />
+                </button>
+
+                {/* Dropdown Menu */}
+                <AnimatePresence>
+                  {isOtrosOpen && (
+                    <>
+                      {/* Backdrop */}
+                      <div 
+                        className="fixed inset-0 z-40" 
+                        onClick={() => setIsOtrosOpen(false)} 
+                      />
+
+                      <motion.div
+                        initial={{ opacity: 0, y: 8, scale: 0.95 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: 8, scale: 0.95 }}
+                        transition={{ duration: 0.15 }}
+                        className="absolute right-0 mt-2 w-56 bg-white rounded-2xl shadow-xl border border-slate-200/80 p-2 z-50 overflow-hidden"
+                      >
+                        <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-100 mb-1 flex items-center justify-between">
+                          <span>Módulos Adicionales</span>
+                          <Lock className="w-3 h-3 text-slate-400" />
+                        </div>
+
+                        <button
+                          onClick={() => {
+                            setActiveTab('movilizacion');
+                            setDashboardType('movilizacion');
+                            setIsOtrosOpen(false);
+                          }}
+                          className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-colors ${
+                            activeTab === 'movilizacion'
+                              ? 'bg-emerald-50 text-emerald-800 font-bold'
+                              : 'text-slate-700 hover:bg-slate-50'
+                          }`}
+                        >
+                          <Bus className="w-4 h-4 text-emerald-600" />
+                          Gastos Movilización
+                        </button>
+
+                        <button
+                          onClick={() => {
+                            setActiveTab('impresiones');
+                            setDashboardType('impresiones');
+                            setIsOtrosOpen(false);
+                          }}
+                          className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-colors ${
+                            activeTab === 'impresiones'
+                              ? 'bg-indigo-50 text-indigo-800 font-bold'
+                              : 'text-slate-700 hover:bg-slate-50'
+                          }`}
+                        >
+                          <Printer className="w-4 h-4 text-indigo-600" />
+                          Gastos Impresiones
+                        </button>
+                      </motion.div>
+                    </>
+                  )}
+                </AnimatePresence>
+              </div>
             </div>
 
-            {/* Year / Sheet Selector */}
-            <div className="relative">
-              <select
-                value={selectedSheet}
-                onChange={(e) => setSelectedSheet(e.target.value)}
-                className="appearance-none bg-slate-100 hover:bg-slate-200 border-none text-slate-800 font-semibold py-2 pl-4 pr-10 rounded-xl focus:ring-2 focus:ring-emerald-500 cursor-pointer transition-colors"
-                style={{ height: "36px" }}
-              >
-                {availableSheets.map(sheet => (
-                  <option key={sheet} value={sheet}>{sheet}</option>
-                ))}
-              </select>
-              <ChevronDown className="w-4 h-4 text-slate-500 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-            </div>
+            {/* Year / Sheet Selector (Visible when viewing expense dashboards) */}
+            {activeTab !== 'estadio' && availableSheets.length > 0 && (
+              <div className="relative">
+                <select
+                  value={selectedSheet}
+                  onChange={(e) => setSelectedSheet(e.target.value)}
+                  className="appearance-none bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-800 font-semibold py-1.5 pl-3 pr-8 rounded-xl text-xs sm:text-sm focus:ring-2 focus:ring-emerald-500 cursor-pointer transition-colors"
+                  style={{ height: "36px" }}
+                >
+                  {availableSheets.map(sheet => (
+                    <option key={sheet} value={sheet}>{sheet}</option>
+                  ))}
+                </select>
+                <ChevronDown className="w-4 h-4 text-slate-500 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
+            )}
           </div>
         </div>
       </header>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 space-y-8">
         
-        {/* Key Metrics */}
+        {/* Render Main Tab: Estadio Marista Control */}
+        {activeTab === 'estadio' ? (
+          <EstadioMaristaControl />
+        ) : (
+          <>
+            {/* Key Metrics */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <motion.div 
             initial={{ opacity: 0, y: 20 }}
@@ -905,6 +1005,8 @@ export default function App() {
               </div>
             )}
           </motion.div>
+        )}
+          </>
         )}
 
       </main>
