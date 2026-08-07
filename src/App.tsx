@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Legend, LineChart, Line } from 'recharts';
-import { Bus, Printer, TrendingUp, DollarSign, Calendar, Activity, Loader2, AlertCircle, ChevronDown, Sparkles, MapPin, Folder, Lock } from 'lucide-react';
+import { Bus, Printer, TrendingUp, DollarSign, Calendar, Activity, Loader2, AlertCircle, ChevronDown, Sparkles, MapPin, Folder, Lock, KeyRound, Eye, EyeOff, X, ShieldCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import Markdown from 'react-markdown';
 import { Chart } from "react-google-charts";
@@ -34,9 +34,113 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'estadio' | 'movilizacion' | 'impresiones'>('estadio');
   const [dashboardType, setDashboardType] = useState<'movilizacion' | 'impresiones'>('movilizacion');
   const [isOtrosOpen, setIsOtrosOpen] = useState(false);
+
+  // Password Protection for "Otros" Tab
+  const [isOtrosUnlocked, setIsOtrosUnlocked] = useState<boolean>(() => {
+    return sessionStorage.getItem('otros_unlocked') === 'true';
+  });
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState<boolean>(false);
+  const [passwordInput, setPasswordInput] = useState<string>('');
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [showPassword, setShowPassword] = useState<boolean>(false);
+  const [sheetPassword, setSheetPassword] = useState<string>('SG');
+
   const [dataCache, setDataCache] = useState<Record<string, any[][]>>({});
   const [availableSheets, setAvailableSheets] = useState<string[]>([]);
   const [selectedSheet, setSelectedSheet] = useState<string>('');
+
+  // Fetch password dynamically from Google Sheets (Column K)
+  const fetchSheetPassword = useCallback(async () => {
+    try {
+      const GOOGLE_SHEET_CSV_URL = 'https://docs.google.com/spreadsheets/d/10fBagqN02_xqo_wvrPx5WlqzJOpBF3YZ6sTeenRlfjA/gviz/tq?tqx=out:csv&gid=0';
+      const res = await fetch(GOOGLE_SHEET_CSV_URL);
+      if (res.ok) {
+        const text = await res.text();
+        const lines = text.split(/\r?\n/).filter(line => line.trim().length > 0);
+        
+        const parseCSVLine = (lineStr: string): string[] => {
+          const result: string[] = [];
+          let current = '';
+          let inQuotes = false;
+          for (let i = 0; i < lineStr.length; i++) {
+            const char = lineStr[i];
+            if (char === '"') {
+              if (inQuotes && lineStr[i + 1] === '"') {
+                current += '"';
+                i++;
+              } else {
+                inQuotes = !inQuotes;
+              }
+            } else if (char === ',' && !inQuotes) {
+              result.push(current.trim().replace(/^"|"$/g, ''));
+              current = '';
+            } else {
+              current += char;
+            }
+          }
+          result.push(current.trim().replace(/^"|"$/g, ''));
+          return result;
+        };
+
+        if (lines.length > 0) {
+          const headerCols = parseCSVLine(lines[0]).map(h => h.toLowerCase().trim());
+          let passColIdx = 10; // Columna K es índice 10 por defecto
+          const foundIdx = headerCols.findIndex(h => h.includes('contra') || h.includes('pass') || h.includes('clave'));
+          if (foundIdx !== -1) passColIdx = foundIdx;
+
+          for (let i = 0; i < lines.length; i++) {
+            const cols = parseCSVLine(lines[i]);
+            if (cols.length > passColIdx) {
+              const val = cols[passColIdx]?.trim();
+              if (val && !val.toLowerCase().includes('contrase') && !val.toLowerCase().includes('clave')) {
+                setSheetPassword(val);
+                return val;
+              }
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Error cargando clave desde la planilla:', err);
+    }
+    return 'SG';
+  }, []);
+
+  useEffect(() => {
+    fetchSheetPassword();
+  }, [fetchSheetPassword]);
+
+  const handleOtrosClick = () => {
+    if (isOtrosUnlocked) {
+      setIsOtrosOpen(!isOtrosOpen);
+    } else {
+      setPasswordInput('');
+      setPasswordError(null);
+      fetchSheetPassword();
+      setIsPasswordModalOpen(true);
+    }
+  };
+
+  const handleVerifyPassword = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const cleanInput = passwordInput.trim();
+    const cleanExpected = sheetPassword.trim();
+
+    if (!cleanInput) {
+      setPasswordError('Por favor ingrese la contraseña.');
+      return;
+    }
+
+    if (cleanInput.toUpperCase() === cleanExpected.toUpperCase() || cleanInput === cleanExpected) {
+      setIsOtrosUnlocked(true);
+      sessionStorage.setItem('otros_unlocked', 'true');
+      setIsPasswordModalOpen(false);
+      setIsOtrosOpen(true);
+      setPasswordError(null);
+    } else {
+      setPasswordError('Contraseña incorrecta. Por favor intente nuevamente.');
+    }
+  };
   
   const [data, setData] = useState<MonthData[]>([]);
   const [categoryTotals, setCategoryTotals] = useState<CategoryTotal[]>([]);
@@ -487,7 +591,7 @@ export default function App() {
               {/* Otros Dropdown Button */}
               <div className="relative">
                 <button
-                  onClick={() => setIsOtrosOpen(!isOtrosOpen)}
+                  onClick={handleOtrosClick}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all ${
                     activeTab !== 'estadio' 
                       ? 'bg-white text-slate-800 shadow-sm ring-1 ring-slate-200/80' 
@@ -495,7 +599,10 @@ export default function App() {
                   }`}
                 >
                   <Folder className="w-4 h-4 text-slate-500" />
-                  Otros
+                  <span>Otros</span>
+                  {!isOtrosUnlocked && (
+                    <Lock className="w-3.5 h-3.5 text-amber-500 ml-0.5" />
+                  )}
                   <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isOtrosOpen ? 'rotate-180' : ''}`} />
                 </button>
 
@@ -1010,6 +1117,102 @@ export default function App() {
         )}
 
       </main>
+
+      {/* Password Protection Modal */}
+      <AnimatePresence>
+        {isPasswordModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              transition={{ duration: 0.2 }}
+              className="bg-white rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl border border-slate-100 relative overflow-hidden"
+            >
+              <button
+                onClick={() => setIsPasswordModalOpen(false)}
+                className="absolute top-5 right-5 text-slate-400 hover:text-slate-600 p-1.5 rounded-full hover:bg-slate-100 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+
+              <div className="flex items-center gap-3.5 mb-5">
+                <div className="w-12 h-12 rounded-2xl bg-amber-50 border border-amber-200/60 flex items-center justify-center text-amber-600 shadow-xs shrink-0">
+                  <KeyRound className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-800 leading-tight">Acceso Restringido</h3>
+                  <p className="text-xs text-slate-500 font-medium">Módulos de Gastos Adicionales</p>
+                </div>
+              </div>
+
+              <p className="text-xs text-slate-600 mb-5 leading-relaxed">
+                Ingrese la contraseña de autorización para acceder a los apartados de <strong>Gastos Movilización</strong> e <strong>Impresiones</strong>.
+              </p>
+
+              <form onSubmit={handleVerifyPassword} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                    Contraseña
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      value={passwordInput}
+                      onChange={(e) => {
+                        setPasswordInput(e.target.value);
+                        if (passwordError) setPasswordError(null);
+                      }}
+                      placeholder="Ingrese contraseña..."
+                      autoFocus
+                      className={`w-full pl-4 pr-11 py-2.5 bg-slate-50 border rounded-xl text-sm font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 transition-all ${
+                        passwordError 
+                          ? 'border-red-300 focus:ring-red-400 bg-red-50/30 text-red-900' 
+                          : 'border-slate-200 focus:ring-blue-500 focus:bg-white'
+                      }`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1"
+                    >
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+
+                  {passwordError && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -4 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="flex items-center gap-1.5 mt-2 text-xs font-semibold text-red-600"
+                    >
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                      <span>{passwordError}</span>
+                    </motion.div>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-end gap-2.5 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsPasswordModalOpen(false)}
+                    className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md shadow-blue-500/20 transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
+                  >
+                    <ShieldCheck className="w-4 h-4" />
+                    Ingresar
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
     </div>
   );

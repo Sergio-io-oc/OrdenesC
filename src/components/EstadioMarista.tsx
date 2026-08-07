@@ -1065,25 +1065,6 @@ function doPost(e) {
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
               <span>{isSyncing ? 'Sincronizando...' : (syncStatus || 'Sincronizado en tiempo real')}</span>
             </div>
-
-            {/* Manual Sync Button */}
-            <button
-              onClick={() => loadTripsFromSheet(true)}
-              disabled={isSyncing}
-              title="Sincronizar ahora con Google Sheets"
-              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs active:scale-95 disabled:opacity-50"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
-              <span>Sincronizar</span>
-            </button>
-
-            {/* Export CSV */}
-            <button
-              onClick={exportToCSV}
-              className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors"
-            >
-              <Download className="w-3.5 h-3.5" /> Exportar CSV
-            </button>
           </div>
         </div>
 
