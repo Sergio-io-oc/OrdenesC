@@ -101,7 +101,7 @@ const VanDrawing: React.FC<{ plate: string; className?: string }> = ({ plate, cl
   </div>
 );
 
-const DEFAULT_WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbxlU4ONYyqT1glK9E5zkZMFH9w-9ALGIRZzItzRndmBhcPUq-d59JdZemVCewATTSdeUA/exec';
+const DEFAULT_WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbwiNqUD94lAMKsKtZSu9Of859FLyMCcw1z-a7FkHT7WIZi30f58tQDdRdrkB6uLgJArHg/exec';
 
 export const EstadioMaristaControl: React.FC = () => {
   const [vehicleType, setVehicleType] = useState<'Bus' | 'Van'>('Bus');
@@ -111,7 +111,14 @@ export const EstadioMaristaControl: React.FC = () => {
   const [notes, setNotes] = useState<string>('');
 
   const [isSheetModalOpen, setIsSheetModalOpen] = useState(false);
-  const [webhookUrl, setWebhookUrl] = useState<string>(() => localStorage.getItem('estadio_webhook_url') || DEFAULT_WEBHOOK_URL);
+  const [webhookUrl, setWebhookUrl] = useState<string>(() => {
+    const saved = localStorage.getItem('estadio_webhook_url');
+    if (!saved || saved.includes('AKfycbxlU4ONYyqT1glK9E5zkZMFH9w-9ALGIRZzItzRndmBhcPUq-d59JdZemVCewATTSdeUA')) {
+      localStorage.setItem('estadio_webhook_url', DEFAULT_WEBHOOK_URL);
+      return DEFAULT_WEBHOOK_URL;
+    }
+    return saved;
+  });
   const [copiedScript, setCopiedScript] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -126,30 +133,7 @@ export const EstadioMaristaControl: React.FC = () => {
         console.error(e);
       }
     }
-    return [
-      {
-        id: '1',
-        vehicleType: 'Bus',
-        plate: 'ABCD12',
-        driver: 'Carlos Mendoza',
-        passengers: 35,
-        arrivalTime: new Date(Date.now() - 45 * 60000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        arrivalTimestamp: Date.now() - 45 * 60000,
-        status: 'active',
-        notes: 'Delegación Basquetbol'
-      },
-      {
-        id: '2',
-        vehicleType: 'Van',
-        plate: 'XY9900',
-        driver: 'Juan Pérez',
-        passengers: 8,
-        arrivalTime: new Date(Date.now() - 20 * 60000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        arrivalTimestamp: Date.now() - 20 * 60000,
-        status: 'active',
-        notes: 'Profesorado y Apoyos'
-      }
-    ];
+    return [];
   });
 
   const [selectedVehicle, setSelectedVehicle] = useState<TripRecord | null>(null);
@@ -157,108 +141,161 @@ export const EstadioMaristaControl: React.FC = () => {
   const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'returned'>('all');
   const [formError, setFormError] = useState<string | null>(null);
 
-  // Cargar datos en vivo desde la planilla Google Sheets pública
-  const loadTripsFromSheet = useCallback(async () => {
-    const GOOGLE_SHEET_CSV_URL = 'https://docs.google.com/spreadsheets/d/10fBagqN02_xqo_wvrPx5WlqzJOpBF3YZ6sTeenRlfjA/gviz/tq?tqx=out:csv&gid=0';
+  const isPostingRef = useRef<boolean>(false);
+  const lastPostTimeRef = useRef<number>(0);
+
+  // Cargar datos en vivo desde la planilla Google Sheets pública o Webhook GET
+  const loadTripsFromSheet = useCallback(async (force = false) => {
+    // Evitar bloquear si el usuario solicita sincronización manual
+    if (!force && (isPostingRef.current || (Date.now() - lastPostTimeRef.current < 2000))) {
+      return;
+    }
+
     setIsSyncing(true);
     try {
-      const res = await fetch(GOOGLE_SHEET_CSV_URL);
-      if (!res.ok) throw new Error('Error al conectar con Google Sheets CSV');
-      const text = await res.text();
-      
-      const lines = text.split(/\r?\n/).filter(line => line.trim().length > 0);
-      if (lines.length > 1) {
-        const parseCSVLine = (line: string): string[] => {
-          const result: string[] = [];
-          let current = '';
-          let inQuotes = false;
-          for (let i = 0; i < line.length; i++) {
-            const char = line[i];
-            if (char === '"') {
-              if (inQuotes && line[i + 1] === '"') {
-                current += '"';
-                i++;
-              } else {
-                inQuotes = !inQuotes;
+      let rawItems: any[] = [];
+      let loadedFromWebhook = false;
+
+      // 1. Intentar cargar directamente desde la Web App URL de Google Apps Script (doGet)
+      const currentWebhook = localStorage.getItem('estadio_webhook_url') || DEFAULT_WEBHOOK_URL;
+      if (currentWebhook && currentWebhook.startsWith('https://script.google.com/')) {
+        try {
+          const webRes = await fetch(currentWebhook);
+          if (webRes.ok) {
+            const text = await webRes.text();
+            if (text.trim().startsWith('[') || text.trim().startsWith('{')) {
+              const json = JSON.parse(text);
+              if (Array.isArray(json)) {
+                rawItems = json;
+                loadedFromWebhook = true;
               }
-            } else if (char === ',' && !inQuotes) {
-              result.push(current.trim().replace(/^"|"$/g, ''));
-              current = '';
-            } else {
-              current += char;
             }
           }
-          result.push(current.trim().replace(/^"|"$/g, ''));
-          return result;
-        };
+        } catch (err) {
+          console.warn('Carga via Webhook GET no respondió JSON, probando CSV:', err);
+        }
+      }
 
-        const fetchedTrips: TripRecord[] = [];
-        // Ignorar encabezados (línea 0)
-        for (let i = 1; i < lines.length; i++) {
-          const cols = parseCSVLine(lines[i]);
-          if (cols.length < 3) continue;
+      // 2. Si no se obtuvo via Webhook GET, intentar con el CSV exportado de Google Sheets
+      if (!loadedFromWebhook) {
+        const GOOGLE_SHEET_CSV_URL = 'https://docs.google.com/spreadsheets/d/10fBagqN02_xqo_wvrPx5WlqzJOpBF3YZ6sTeenRlfjA/gviz/tq?tqx=out:csv&gid=0';
+        const res = await fetch(GOOGLE_SHEET_CSV_URL);
+        if (res.ok) {
+          const text = await res.text();
+          if (!text.trim().startsWith('<')) {
+            const lines = text.split(/\r?\n/).filter(line => line.trim().length > 0);
+            if (lines.length > 1) {
+              const parseCSVLine = (line: string): string[] => {
+                const result: string[] = [];
+                let current = '';
+                let inQuotes = false;
+                for (let i = 0; i < line.length; i++) {
+                  const char = line[i];
+                  if (char === '"') {
+                    if (inQuotes && line[i + 1] === '"') {
+                      current += '"';
+                      i++;
+                    } else {
+                      inQuotes = !inQuotes;
+                    }
+                  } else if (char === ',' && !inQuotes) {
+                    result.push(current.trim().replace(/^"|"$/g, ''));
+                    current = '';
+                  } else {
+                    current += char;
+                  }
+                }
+                result.push(current.trim().replace(/^"|"$/g, ''));
+                return result;
+              };
 
-          // Col 0: Valor ($150.000, $137.500)
-          // Col 1: Tipo Vehículo (Bus, Van)
-          // Col 2: Patente
-          // Col 3: Profesor a Cargo
-          // Col 4: Pasajeros
-          // Col 5: Fecha y Hora Llegada
-          // Col 6: Fecha y Hora Regreso
-          // Col 7: Estado
-          // Col 8: Observaciones
+              const headerCols = parseCSVLine(lines[0]).map(h => h.toLowerCase().trim());
+              const findCol = (keywords: string[], fallback: number): number => {
+                const idx = headerCols.findIndex(h => keywords.some(kw => h.includes(kw)));
+                return idx !== -1 ? idx : fallback;
+              };
 
-          const vehicleTypeRaw = cols[1] || '';
-          if (!vehicleTypeRaw || vehicleTypeRaw.toLowerCase().includes('tipo')) continue;
+              const idxTipo = findCol(['tipo', 'vehiculo', 'vehicle'], 1);
+              const idxPatente = findCol(['patente', 'plate'], 2);
+              const idxProfesor = findCol(['profesor', 'driver', 'cargo'], 3);
+              const idxPasajeros = findCol(['pasajero', 'passenger', 'persona'], 4);
+              const idxLlegada = findCol(['llegada', 'arrival'], 5);
+              const idxRegreso = findCol(['regreso', 'return', 'salida'], 6);
+              const idxEstado = findCol(['estado', 'status'], 7);
+              const idxNotes = findCol(['observac', 'note', 'motivo'], 8);
 
+              for (let i = 1; i < lines.length; i++) {
+                const cols = parseCSVLine(lines[i]);
+                if (cols.length < 2) continue;
+                const plate = (cols[idxPatente] || cols[2] || '').trim().toUpperCase();
+                if (!plate || plate.toLowerCase() === 'patente' || plate.toLowerCase().includes('tipo')) continue;
+
+                rawItems.push({
+                  tipoVehiculo: cols[idxTipo] || cols[1] || '',
+                  patente: plate,
+                  profesorACargo: cols[idxProfesor] || cols[3] || '',
+                  pasajeros: cols[idxPasajeros] || cols[4] || 0,
+                  fechaHoraLlegada: cols[idxLlegada] || cols[5] || '',
+                  fechaHoraRegreso: cols[idxRegreso] || cols[6] || '',
+                  estado: cols[idxEstado] || cols[7] || '',
+                  observaciones: cols[idxNotes] || cols[8] || ''
+                });
+              }
+            }
+          }
+        }
+      }
+
+      // Convertir elementos a TripRecord[] ordenados
+      if (rawItems.length >= 0) {
+        const now = Date.now();
+        const fetchedTrips: TripRecord[] = rawItems.map((item, idx) => {
+          const plate = (item.patente || item.plate || item.Patente || '').toString().trim().toUpperCase();
+          const vehicleTypeRaw = (item.tipoVehiculo || item.vehicleType || item.TipoVehiculo || '').toString();
           const vehicleType: 'Bus' | 'Van' = vehicleTypeRaw.toLowerCase().includes('van') ? 'Van' : 'Bus';
-          const plate = cols[2] || '';
-          if (!plate || plate.toLowerCase() === 'patente') continue;
+          const driver = (item.profesorACargo || item.driver || item.ProfesorACargo || '').toString();
+          const passengers = parseInt(item.pasajeros || item.passengers || item.Pasajeros, 10) || 0;
+          const arrivalTime = (item.fechaHoraLlegada || item.arrivalTime || item.FechaHoraLlegada || '').toString();
+          const returnTime = (item.fechaHoraRegreso || item.returnTime || item.FechaHoraRegreso || '').toString();
+          const estadoRaw = (item.estado || item.status || item.Estado || '').toString().toLowerCase();
 
-          const driver = cols[3] || '';
-          const passengers = parseInt(cols[4], 10) || 0;
-          const arrivalTime = cols[5] || '';
-          const returnTime = cols[6] || '';
-          const estadoRaw = cols[7] || '';
-          
           const status: 'active' | 'returned' = (
-            estadoRaw.toLowerCase().includes('estadio') || 
-            estadoRaw.toLowerCase().includes('active') || 
-            (!returnTime && !estadoRaw.toLowerCase().includes('regres'))
+            estadoRaw.includes('estadio') || 
+            estadoRaw.includes('activo') || 
+            (!returnTime && !estadoRaw.includes('regres'))
           ) ? 'active' : 'returned';
 
-          const notes = cols[8] || '';
+          const notes = (item.observaciones || item.notes || item.Observaciones || '').toString();
 
-          fetchedTrips.push({
-            id: `sheet-${i}-${plate}`,
+          return {
+            id: `sheet-${idx}-${plate}`,
             vehicleType,
-            plate: plate.toUpperCase(),
+            plate,
             driver,
             passengers,
             arrivalTime: arrivalTime || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            arrivalTimestamp: Date.now() - (lines.length - i) * 60000,
+            arrivalTimestamp: now - (rawItems.length - idx) * 60000,
             returnTime: returnTime || undefined,
-            returnTimestamp: returnTime ? Date.now() : undefined,
+            returnTimestamp: returnTime ? now : undefined,
             status,
             notes
-          });
-        }
+          };
+        }).filter(t => t.plate && t.plate !== 'PATENTE');
 
-        if (fetchedTrips.length > 0) {
-          setTrips(fetchedTrips);
-          localStorage.setItem('estadio_marista_trips', JSON.stringify(fetchedTrips));
-          setSyncStatus(`Cargado (${fetchedTrips.length} de Google Sheets)`);
-          return;
-        }
+        setTrips(fetchedTrips);
+        localStorage.setItem('estadio_marista_trips', JSON.stringify(fetchedTrips));
+        setSyncStatus(`Sincronizado (${fetchedTrips.length} registros)`);
+        return;
       }
     } catch (e) {
-      console.warn('Carga directa de CSV falló o sin datos:', e);
+      console.warn('Carga directa de Sheets falló, manteniendo estado actual:', e);
+      setSyncStatus('Error al sincronizar');
     } finally {
       setIsSyncing(false);
     }
   }, []);
 
-  // Carga inicial y actualización en tiempo real cada 10 segundos
+  // Carga inicial y actualización periódica en tiempo real cada 10 segundos
   useEffect(() => {
     loadTripsFromSheet();
     const interval = setInterval(() => {
@@ -268,10 +305,15 @@ export const EstadioMaristaControl: React.FC = () => {
   }, [loadTripsFromSheet]);
 
   const sendSyncToSheet = async (dataToSync: TripRecord[]) => {
-    const targetUrl = DEFAULT_WEBHOOK_URL;
+    const targetUrl = webhookUrl || DEFAULT_WEBHOOK_URL;
+    isPostingRef.current = true;
+    lastPostTimeRef.current = Date.now();
     setIsSyncing(true);
     try {
-      const formattedData = dataToSync.map(t => {
+      // Ordenar cronológicamente (los registros más antiguos primero, los más recientes al final hacia abajo)
+      const chronologicalTrips = [...dataToSync].sort((a, b) => (a.arrivalTimestamp || 0) - (b.arrivalTimestamp || 0));
+
+      const formattedData = chronologicalTrips.map(t => {
         const valorNum = t.vehicleType === 'Van' ? 137500 : 150000;
         const valorText = `$${valorNum.toLocaleString('es-CL')}`;
         return {
@@ -329,6 +371,10 @@ export const EstadioMaristaControl: React.FC = () => {
       setSyncStatus('Error al sincronizar');
     } finally {
       setIsSyncing(false);
+      setTimeout(() => {
+        isPostingRef.current = false;
+        loadTripsFromSheet(true);
+      }, 1500);
     }
   };
 
@@ -375,9 +421,9 @@ export const EstadioMaristaControl: React.FC = () => {
       notes: notes.trim() || undefined
     };
 
-    const updatedTrips = [newTrip, ...trips];
+    const updatedTrips = [...trips, newTrip];
     setTrips(updatedTrips);
-    sendSyncToSheet(updatedTrips);
+    sendSyncToSheet([newTrip]); // Enviar ÚNICAMENTE el nuevo registro
     setPlate('');
     setDriver('');
     setPassengers('');
@@ -388,20 +434,24 @@ export const EstadioMaristaControl: React.FC = () => {
     const now = new Date();
     const returnFormatted = `${now.toLocaleDateString('es-CL')} ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
     
+    let updatedRecord: TripRecord | null = null;
     const updatedTrips = trips.map(trip => {
       if (trip.id === id) {
-        return {
+        updatedRecord = {
           ...trip,
           status: 'returned' as const,
           returnTime: returnFormatted,
           returnTimestamp: now.getTime()
         };
+        return updatedRecord;
       }
       return trip;
     });
 
     setTrips(updatedTrips);
-    sendSyncToSheet(updatedTrips);
+    if (updatedRecord) {
+      sendSyncToSheet([updatedRecord]); // Enviar ÚNICAMENTE el registro actualizado
+    }
 
     if (selectedVehicle?.id === id) {
       setSelectedVehicle(null);
@@ -489,18 +539,48 @@ export const EstadioMaristaControl: React.FC = () => {
   };
 
   const handleManualSync = async () => {
-    await sendSyncToSheet(trips);
+    await loadTripsFromSheet(true);
   };
 
-  const appsScriptCode = `function doPost(e) {
+  const appsScriptCode = `function doGet(e) {
+  try {
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+    var lastRow = sheet.getLastRow();
+    if (lastRow <= 1) {
+      return ContentService.createTextOutput(JSON.stringify([]))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+    var data = sheet.getRange(2, 1, lastRow - 1, 9).getValues();
+    var result = data.map(function(row) {
+      return {
+        valor: row[0],
+        tipoVehiculo: row[1],
+        patente: row[2],
+        profesorACargo: row[3],
+        pasajeros: row[4],
+        fechaHoraLlegada: row[5],
+        fechaHoraRegreso: row[6],
+        estado: row[7],
+        observaciones: row[8]
+      };
+    });
+    return ContentService.createTextOutput(JSON.stringify(result))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch(err) {
+    return ContentService.createTextOutput(JSON.stringify({ error: err.toString() }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+function doPost(e) {
   try {
     var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
     var data = JSON.parse(e.postData.contents);
     
-    // Si la hoja está vacía, coloca los encabezados requeridos
+    // Si la hoja está totalmente vacía (0 filas), colocar la fila de encabezados en la fila 1
     if (sheet.getLastRow() === 0) {
       sheet.appendRow([
-        "ID", 
+        "Valor", 
         "Tipo Vehículo", 
         "Patente", 
         "Profesor a Cargo", 
@@ -511,27 +591,56 @@ export const EstadioMaristaControl: React.FC = () => {
         "Observaciones"
       ]);
       sheet.getRange(1, 1, 1, 9).setFontWeight("bold").setBackground("#dbeafe");
+      SpreadsheetApp.flush();
     }
     
-    // Si recibe el listado completo, sincroniza las filas
-    if (Array.isArray(data)) {
-      if (sheet.getLastRow() > 1) {
-        sheet.getRange(2, 1, sheet.getLastRow() - 1, 9).clearContent();
+    var items = Array.isArray(data) ? data : [data];
+    items.forEach(function(row) {
+      var plateToFind = row.patente || row.plate || "";
+      var returnTime = row.fechaHoraRegreso || row.returnTime || "";
+      var statusVal = row.estado || row.status || "";
+      var notesVal = row.observaciones || row.notes || "";
+      
+      var isUpdated = false;
+      
+      // Si el registro incluye hora de regreso, intentar actualizar la fila existente del vehículo activo
+      if (returnTime && plateToFind && sheet.getLastRow() > 1) {
+        var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 9).getValues();
+        for (var i = values.length - 1; i >= 0; i--) {
+          var rowPlate = (values[i][2] || "").toString().trim().toUpperCase();
+          var rowStatus = (values[i][7] || "").toString().trim().toLowerCase();
+          
+          if (rowPlate === plateToFind.trim().toUpperCase() && (rowStatus.indexOf("estadio") !== -1 || rowStatus.indexOf("activo") !== -1 || values[i][6] === "")) {
+            var rowIndex = i + 2; // +2 porque el rango empieza en fila 2
+            sheet.getRange(rowIndex, 7).setValue(returnTime);
+            sheet.getRange(rowIndex, 8).setValue(statusVal || "Regresó al Colegio");
+            if (notesVal) {
+              sheet.getRange(rowIndex, 9).setValue(notesVal);
+            }
+            isUpdated = true;
+            break;
+          }
+        }
       }
-      data.forEach(function(row) {
+      
+      // Si es un nuevo ingreso (o no se encontró fila activa), añadir como NUEVA FILA correlativa al final de la hoja
+      if (!isUpdated) {
         sheet.appendRow([
-          row.id || "",
+          row.valor || row.Valor || 0,
           row.tipoVehiculo || row.vehicleType || "",
           row.patente || row.plate || "",
           row.profesorACargo || row.driver || "",
           row.pasajeros || row.passengers || "",
           row.fechaHoraLlegada || row.arrivalTime || "",
-          row.fechaHoraRegreso || row.returnTime || "",
-          row.estado || "",
-          row.observaciones || row.notes || ""
+          returnTime,
+          statusVal || "En Estadio Marista",
+          notesVal
         ]);
-      });
-    }
+      }
+    });
+    
+    SpreadsheetApp.flush();
+    
     return ContentService.createTextOutput(JSON.stringify({ status: "success" }))
       .setMimeType(ContentService.MimeType.JSON);
   } catch(err) {
@@ -763,7 +872,15 @@ export const EstadioMaristaControl: React.FC = () => {
                 </p>
               </div>
             ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-6 my-auto py-2">
+              <div className={`grid gap-4 my-auto py-2 ${
+                activeVehicles.length <= 2 
+                  ? 'grid-cols-1 sm:grid-cols-2 max-w-md mx-auto w-full' 
+                  : activeVehicles.length <= 4 
+                  ? 'grid-cols-2 sm:grid-cols-2' 
+                  : activeVehicles.length <= 9
+                  ? 'grid-cols-2 sm:grid-cols-3'
+                  : 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4'
+              } max-h-[500px] overflow-y-auto pr-1`}>
                 <AnimatePresence>
                   {activeVehicles.map((vehicle) => (
                     <motion.div
@@ -773,19 +890,19 @@ export const EstadioMaristaControl: React.FC = () => {
                       exit={{ scale: 0.5, opacity: 0, x: 100 }}
                       transition={{ type: "spring", stiffness: 300, damping: 25 }}
                       onClick={() => setSelectedVehicle(vehicle)}
-                      className="group cursor-pointer bg-white p-4 rounded-2xl border border-slate-200/80 hover:border-blue-400 hover:shadow-md transition-all flex flex-col items-center relative"
+                      className="group cursor-pointer bg-white p-3.5 sm:p-4 rounded-2xl border border-slate-200/80 hover:border-blue-400 hover:shadow-md transition-all flex flex-col items-center relative"
                     >
                       {/* Vehicle Drawing */}
-                      <div className="py-2 transform group-hover:scale-105 transition-transform">
+                      <div className="py-1.5 sm:py-2 transform group-hover:scale-105 transition-transform">
                         {vehicle.vehicleType === 'Bus' ? (
-                          <BusDrawing plate={vehicle.plate} className="w-28 h-20" />
+                          <BusDrawing plate={vehicle.plate} className="w-24 sm:w-28 h-18 sm:h-20" />
                         ) : (
-                          <VanDrawing plate={vehicle.plate} className="w-28 h-20" />
+                          <VanDrawing plate={vehicle.plate} className="w-24 sm:w-28 h-18 sm:h-20" />
                         )}
                       </div>
 
-                      <div className="mt-4 text-center w-full pt-2 border-t border-slate-100">
-                        <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                      <div className="mt-2 sm:mt-3 text-center w-full pt-1.5 border-t border-slate-100">
+                        <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block truncate">
                           Llegó {vehicle.arrivalTime.split(' ')[1] || vehicle.arrivalTime}
                         </span>
                         <div className="text-xs font-semibold text-blue-600 flex items-center justify-center gap-1 mt-0.5">
@@ -948,6 +1065,17 @@ export const EstadioMaristaControl: React.FC = () => {
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
               <span>{isSyncing ? 'Sincronizando...' : (syncStatus || 'Sincronizado en tiempo real')}</span>
             </div>
+
+            {/* Manual Sync Button */}
+            <button
+              onClick={() => loadTripsFromSheet(true)}
+              disabled={isSyncing}
+              title="Sincronizar ahora con Google Sheets"
+              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs active:scale-95 disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+              <span>Sincronizar</span>
+            </button>
 
             {/* Export CSV */}
             <button

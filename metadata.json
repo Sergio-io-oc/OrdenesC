@@ -1,5 +1,5 @@
 {
-  "name": "Sergio",
-  "description": "Pagina destinada a Sergio.",
-  ]
+  "name": "Maristas Rancagua",
+  "description": "Control de llegadas y regresos de buses y vans al Estadio Marista - Instituto O'Higgins Maristas Rancagua.",
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
